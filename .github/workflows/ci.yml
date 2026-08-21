@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancel superseded runs on the same branch/PR so pushes don't queue stale CI.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    name: Install, lint, typecheck, test, build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Builds packages/types + packages/providers + the generated Prisma
+      # client — every other step (lint, typecheck, test, build) depends on
+      # these existing first, since apps import them as compiled packages,
+      # not raw source. See package.json's build:packages script.
+      - name: Build shared packages
+        run: pnpm run build:packages
+
+      - name: Lint
+        run: pnpm -r run lint
+
+      - name: Typecheck
+        run: pnpm -r run typecheck
+
+      # Unit + integration tests only — apps/api's e2e suite spins up its
+      # own throwaway embedded Postgres (no external services needed) and
+      # mocks Redis, so it runs here too. The browser-driven Playwright
+      # golden-path suite (apps/web/e2e) is NOT run in this job: it needs
+      # the full stack (web+api+worker+Postgres+Redis) live simultaneously
+      # plus a Chromium install, which is a meaningfully heavier and more
+      # fragile CI setup than this project's size currently justifies — see
+      # README.md#testing for how to run it locally/manually instead.
+      - name: Test
+        run: pnpm -r run test
+
+      - name: Build
+        run: pnpm -r --filter ./apps/* run build

@@ -1,0 +1,10 @@
+{
+  "name": "@lead-radar/config",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Shared TypeScript and Tailwind configuration presets for LeadRadar apps",
+  "files": [
+    "tsconfig.base.json",
+    "tailwind.preset.js"
+  ]
+}

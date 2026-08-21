@@ -1,0 +1,37 @@
+{
+  "name": "lead-radar",
+  "version": "0.1.0",
+  "private": true,
+  "description": "LeadRadar — Find leads. Spot opportunities. Start conversations.",
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  },
+  "packageManager": "pnpm@11.22.0",
+  "scripts": {
+    "setup": "node scripts/setup.mjs",
+    "dev": "pnpm --parallel --filter ./apps/* run dev",
+    "dev:web": "pnpm --filter web run dev",
+    "dev:api": "pnpm --filter api run dev",
+    "dev:worker": "pnpm --filter worker run dev",
+    "build:packages": "pnpm --filter api run prisma:generate && pnpm --filter @lead-radar/types run build && pnpm --filter @lead-radar/providers run build",
+    "build": "pnpm run build:packages && pnpm -r --filter ./apps/* run build",
+    "lint": "pnpm run build:packages && pnpm -r run lint",
+    "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\" --ignore-path .gitignore",
+    "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,json,md}\" --ignore-path .gitignore",
+    "typecheck": "pnpm run build:packages && pnpm -r run typecheck",
+    "test": "pnpm run build:packages && pnpm -r run test",
+    "prisma:generate": "pnpm --filter api run prisma:generate",
+    "prisma:migrate": "pnpm --filter api run prisma:migrate",
+    "docker:up": "docker compose -f docker/docker-compose.yml up -d",
+    "docker:up:full": "docker compose -f docker/docker-compose.yml --profile full up -d --build",
+    "docker:down": "docker compose -f docker/docker-compose.yml --profile full down",
+    "docker:logs": "docker compose -f docker/docker-compose.yml --profile full logs -f",
+    "dev:db": "node apps/api/scripts/dev-postgres.cjs",
+    "dev:redis": "node apps/worker/scripts/dev-redis.cjs"
+  },
+  "devDependencies": {
+    "prettier": "^3.3.3",
+    "typescript": "^5.5.4"
+  }
+}

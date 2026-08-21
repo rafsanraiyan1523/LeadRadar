@@ -1,0 +1,50 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build outputs
+dist/
+build/
+.next/
+out/
+*.tsbuildinfo
+
+# Env
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Testing
+coverage/
+playwright-report/
+test-results/
+
+# Prisma
+apps/api/prisma/*.db
+packages/db/generated/
+apps/api/.pgtest-e2e/
+
+# No-Docker local dev infra (see `pnpm dev:db` / `pnpm dev:redis`) — data
+# directory and downloaded binaries, both machine-local.
+apps/api/.devdb-postgres/
+apps/worker/.devredis/
+
+# IDE / OS
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+
+# Docker
+docker/volumes/
+
+# Misc
+.turbo/
+.cache/

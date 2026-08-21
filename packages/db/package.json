@@ -1,0 +1,14 @@
+{
+  "name": "@lead-radar/db",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Generated Prisma client, shared by apps/api and apps/worker so both talk to the database with one identical, single-source-of-truth schema.",
+  "main": "./generated/index.js",
+  "types": "./generated/index.d.ts",
+  "files": [
+    "generated"
+  ],
+  "dependencies": {
+    "@prisma/client": "^5.22.0"
+  }
+}

@@ -1,0 +1,913 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../../../packages/db/generated"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================================
+// Enums
+// ============================================================================
+
+/// Organization-scoped permission level. See docs/architecture.md#authorization.
+enum OrgRole {
+  OWNER
+  ADMIN
+  MEMBER
+  VIEWER
+}
+
+enum UserStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum InvitationStatus {
+  PENDING
+  ACCEPTED
+  EXPIRED
+  REVOKED
+}
+
+enum LeadStatus {
+  NEW
+  SAVED
+  CONTACTED
+  REPLIED
+  INTERESTED
+  MEETING
+  PROPOSAL
+  WON
+  LOST
+}
+
+enum ContactType {
+  PHONE
+  EMAIL
+  WEBSITE
+  BOOKING_URL
+}
+
+/// Where a piece of contact data was observed. Contact info is never
+/// fabricated, so every LeadContact must be traceable to one of these.
+enum ContactSource {
+  GOOGLE_PLACES
+  WEBSITE
+  MANUAL
+}
+
+enum SocialPlatform {
+  FACEBOOK
+  INSTAGRAM
+  LINKEDIN
+  YOUTUBE
+  TIKTOK
+}
+
+enum GrowthOpportunityImpact {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+/// Never FOUND/NOT_FOUND is asserted without a real, current lookup against
+/// the permitted Google Places data — see GoogleBusinessAuditService.
+enum GoogleProfileStatus {
+  FOUND
+  NOT_FOUND_IN_CURRENT_SEARCH
+  UNVERIFIED
+}
+
+enum OutreachChannel {
+  EMAIL
+  WHATSAPP
+  FACEBOOK
+  LINKEDIN
+  SMS
+}
+
+enum OutreachStatus {
+  DRAFT
+  SENT
+}
+
+enum OutreachKind {
+  OUTREACH
+  FOLLOW_UP
+}
+
+enum OutreachTone {
+  PROFESSIONAL
+  FRIENDLY
+  CONSULTATIVE
+  SHORT
+}
+
+enum OutreachLanguage {
+  ENGLISH
+  BANGLA
+  BANGLISH
+}
+
+/// Which AIProvider implementation produced a piece of AI-generated content —
+/// see @lead-radar/providers/ai. Kept per-record (not just per-org config) so
+/// history stays interpretable after the org's AI configuration changes.
+enum AIProviderMode {
+  MOCK
+  LOCAL
+  EXTERNAL
+}
+
+/// The five AI features from the AI architecture spec — tracked per usage
+/// event so AI spend/volume is auditable per feature.
+enum AIFeature {
+  LEAD_SUMMARY
+  GROWTH_ANALYSIS
+  OUTREACH
+  FOLLOW_UP
+}
+
+enum CampaignStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  COMPLETED
+}
+
+/// Mirrors @lead-radar/types RecommendedServiceType — the same eight-service
+/// catalog AI/rule-based growth-opportunity recommendations are drawn from,
+/// re-declared as a real enum here so a campaign's target service is
+/// validated at the DB level too.
+enum CampaignService {
+  WEBSITE_DEVELOPMENT
+  SEO
+  GOOGLE_BUSINESS_OPTIMIZATION
+  ONLINE_BOOKING
+  ECOMMERCE
+  SOCIAL_MEDIA
+  PAID_ADS
+  CUSTOM_SOFTWARE
+}
+
+enum CampaignLeadStatus {
+  PENDING
+  SENT
+  RESPONDED
+}
+
+enum FollowUpStatus {
+  PENDING
+  DONE
+  CANCELLED
+}
+
+enum SearchStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+enum EnrichmentStatus {
+  NOT_STARTED
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+/// Which LeadDiscoveryProvider produced a search's results — stored per the
+/// SEARCH HISTORY requirement ("provider mode") so past searches remain
+/// interpretable even after the org's provider configuration changes.
+enum ProviderMode {
+  MOCK
+  GOOGLE
+}
+
+// ============================================================================
+// Auth & tenancy
+// ============================================================================
+
+model User {
+  id              String     @id @default(uuid()) @db.Uuid
+  email           String     @unique
+  passwordHash    String
+  name            String
+  avatarUrl       String?
+  status          UserStatus @default(ACTIVE)
+  emailVerifiedAt DateTime?
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  memberships             OrganizationMember[]
+  refreshSessions         RefreshSession[]
+  emailVerificationTokens EmailVerificationToken[]
+  passwordResetTokens     PasswordResetToken[]
+  sentInvitations         Invitation[]             @relation("InvitationInvitedBy")
+  createdLeads            Lead[]                   @relation("LeadCreatedBy")
+  leadActivities          LeadActivity[]
+  savedLeads              SavedLead[]
+  searches                Search[]
+  createdCampaigns        Campaign[]               @relation("CampaignCreatedBy")
+  notifications           Notification[]
+  auditLogs               AuditLog[]
+  generatedOutreach       OutreachMessage[]        @relation("OutreachGeneratedBy")
+  followUps               FollowUp[]
+  aiUsageEvents           AIUsageEvent[]
+
+  @@map("users")
+}
+
+model Organization {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String
+  slug      String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  members        OrganizationMember[]
+  invitations    Invitation[]
+  leads          Lead[]
+  tags           Tag[]
+  campaigns      Campaign[]
+  searches       Search[]
+  notifications  Notification[]
+  auditLogs      AuditLog[]
+  savedLeads     SavedLead[]
+  leadActivities LeadActivity[]
+  followUps      FollowUp[]
+  aiUsageEvents  AIUsageEvent[]
+
+  @@map("organizations")
+}
+
+model OrganizationMember {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @db.Uuid
+  userId         String   @db.Uuid
+  role           OrgRole  @default(MEMBER)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, userId])
+  @@index([userId])
+  @@map("organization_members")
+}
+
+model Invitation {
+  id              String           @id @default(uuid()) @db.Uuid
+  organizationId  String           @db.Uuid
+  email           String
+  role            OrgRole          @default(MEMBER)
+  tokenHash       String           @unique
+  status          InvitationStatus @default(PENDING)
+  invitedByUserId String           @db.Uuid
+  expiresAt       DateTime
+  acceptedAt      DateTime?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  invitedBy    User         @relation("InvitationInvitedBy", fields: [invitedByUserId], references: [id])
+
+  @@index([organizationId])
+  @@index([email])
+  @@map("invitations")
+}
+
+model RefreshSession {
+  id                  String    @id @default(uuid()) @db.Uuid
+  userId              String    @db.Uuid
+  tokenHash           String    @unique
+  userAgent           String?
+  ipAddress           String?
+  expiresAt           DateTime
+  revokedAt           DateTime?
+  replacedByTokenHash String?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("refresh_sessions")
+}
+
+/// Not in the original module list but required to implement "email
+/// verification architecture" as a real, persisted flow rather than a stub.
+/// Mirrors the RefreshSession pattern (hashed opaque token + expiry).
+model EmailVerificationToken {
+  id         String    @id @default(uuid()) @db.Uuid
+  userId     String    @db.Uuid
+  tokenHash  String    @unique
+  expiresAt  DateTime
+  consumedAt DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("email_verification_tokens")
+}
+
+/// Not in the original module list, added for the same reason as
+/// EmailVerificationToken — "forgot password" / "reset password" need a
+/// persisted, single-use, expiring token.
+model PasswordResetToken {
+  id         String    @id @default(uuid()) @db.Uuid
+  userId     String    @db.Uuid
+  tokenHash  String    @unique
+  expiresAt  DateTime
+  consumedAt DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("password_reset_tokens")
+}
+
+// ============================================================================
+// Leads
+// ============================================================================
+
+model Lead {
+  id              String  @id @default(uuid()) @db.Uuid
+  organizationId  String  @db.Uuid
+  createdByUserId String? @db.Uuid
+
+  businessName String
+  category     String?
+  address      String?
+  city         String?
+  country      String?
+  latitude     Float?
+  longitude    Float?
+
+  // Externally sourced (e.g. Google Places), kept separate from
+  // app-generated analysis below.
+  googlePlaceId  String?
+  googleMapsUri  String?
+  rating         Float?
+  reviewCount    Int?
+  businessStatus String?
+  websiteUrl     String?
+  phone          String?
+  email          String?
+
+  // App-generated analysis. opportunityScore is a denormalized read cache of
+  // OpportunityScore.score, recomputed whenever that changes.
+  opportunityScore Int?
+  leadStatus       LeadStatus @default(NEW)
+
+  // Contact-enrichment run state (website crawl + contact/social discovery).
+  // Mirrors Search's status/progress pattern, but lives directly on Lead
+  // since there's exactly one "current" enrichment per lead, not a growing
+  // history — WebsiteAudit is where run-over-run history is kept.
+  enrichmentStatus   EnrichmentStatus @default(NOT_STARTED)
+  enrichmentProgress Int              @default(0)
+  enrichmentError    String?
+  enrichmentJobId    String?
+  lastEnrichedAt     DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdBy    User?        @relation("LeadCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+
+  contacts               LeadContact[]
+  socialProfiles         LeadSocialProfile[]
+  website                LeadWebsite?
+  googleBusinessProfile  GoogleBusinessProfile?
+  websiteAudits          WebsiteAudit[]
+  opportunityScoreDetail OpportunityScore?
+  growthOpportunities    GrowthOpportunity[]
+  aiInsight              AIInsight?
+  outreachMessages       OutreachMessage[]
+  aiUsageEvents          AIUsageEvent[]
+  activities             LeadActivity[]
+  savedBy                SavedLead[]
+  campaignLeads          CampaignLead[]
+  tags                   LeadTag[]
+  followUps              FollowUp[]
+  searchResults          SearchResult[]
+
+  @@unique([organizationId, googlePlaceId])
+  @@index([organizationId])
+  @@index([organizationId, leadStatus])
+  @@map("leads")
+}
+
+model LeadContact {
+  id            String        @id @default(uuid()) @db.Uuid
+  leadId        String        @db.Uuid
+  type          ContactType
+  value         String
+  source        ContactSource
+  verified      Boolean       @default(false)
+  lastCheckedAt DateTime?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  lead Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@index([leadId])
+  @@map("lead_contacts")
+}
+
+model LeadSocialProfile {
+  id        String         @id @default(uuid()) @db.Uuid
+  leadId    String         @db.Uuid
+  platform  SocialPlatform
+  url       String
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+
+  lead Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@unique([leadId, platform])
+  @@map("lead_social_profiles")
+}
+
+/// The lead's own website — one canonical record per lead. Audit history
+/// (many audits over time) lives separately in WebsiteAudit.
+model LeadWebsite {
+  id            String    @id @default(uuid()) @db.Uuid
+  leadId        String    @unique @db.Uuid
+  url           String
+  isReachable   Boolean?
+  hasSsl        Boolean?
+  /// Detected tech-stack fingerprints only (e.g. "WordPress", "Shopify").
+  technologies  Json?
+  /// Raw crawl extraction: title, meta description, headings, canonical,
+  /// robots directives, sitemap URL, Open Graph, structured data, viewport,
+  /// contact/booking URLs, basic accessibility signals. See
+  /// @lead-radar/types WebsiteExtraction for the shape.
+  metadata      Json?
+  pagesCrawled  Int?
+  lastCheckedAt DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  lead Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@map("lead_websites")
+}
+
+/// Snapshot of what Google Places returned for this lead (GoogleBusinessAuditService).
+/// Externally sourced — never edited by app logic, only re-fetched. `placeId`
+/// is null whenever we've never had a real Google identifier to look up
+/// (status UNVERIFIED); `status`/`reason` record the audit's own honesty
+/// contract — see the GoogleProfileStatus enum doc.
+model GoogleBusinessProfile {
+  id              String              @id @default(uuid()) @db.Uuid
+  leadId          String              @unique @db.Uuid
+  status          GoogleProfileStatus @default(UNVERIFIED)
+  /// Google Profile Score (0-100) — null unless status is FOUND.
+  score           Int?
+  reason          String?
+  placeId         String?
+  displayName     String?
+  primaryCategory String?
+  categories      String[]
+  rating          Float?
+  userRatingCount Int?
+  businessStatus  String?
+  phone           String?
+  websiteUrl      String?
+  address         String?
+  openingHours    Json?
+  photosAvailable Boolean?
+  mapsUri         String?
+  fetchedAt       DateTime
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  lead Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@map("google_business_profiles")
+}
+
+/// One row per audit run — kept as history, not overwritten, so trend
+/// ("did this improve after outreach?") is answerable later.
+model WebsiteAudit {
+  id                 String   @id @default(uuid()) @db.Uuid
+  leadId             String   @db.Uuid
+  /// Overall Website Score (0-100) — the equal-weighted roll-up of seo/mobile/conversion/technical/accessibility.
+  websiteScore       Int?
+  performanceScore   Int?
+  seoScore           Int?
+  mobileScore        Int?
+  conversionScore    Int?
+  technicalScore     Int?
+  accessibilityScore Int?
+  /// Snapshotted alongside the run for history/trend — the live value also stays computable from Lead+contacts+social.
+  contactabilityScore Int?
+  hasSsl             Boolean?
+  isMobileFriendly   Boolean?
+  techStack          String[]
+  issues             Json?
+  /// Full structured breakdown per audit category (SeoAuditResult, ConversionAuditResult, etc.) — the evidence backing every score and finding.
+  signals            Json?
+  auditedAt          DateTime @default(now())
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  lead Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@index([leadId])
+  @@map("website_audits")
+}
+
+/// Current opportunity score + explainable breakdown for a lead. Recomputed
+/// (not appended) as new signals come in; Lead.opportunityScore mirrors
+/// `score` for cheap list-view sorting/filtering.
+model OpportunityScore {
+  id           String   @id @default(uuid()) @db.Uuid
+  leadId       String   @unique @db.Uuid
+  score        Int
+  breakdown    Json
+  calculatedAt DateTime @default(now())
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  lead Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@map("opportunity_scores")
+}
+
+/// A single GrowthOpportunityService finding. `type` doubles as the
+/// category (website/seo/conversion/mobile/technical/google-business/
+/// social/content) and `impact` as severity — replaced wholesale on every
+/// audit run (current state, not history; WebsiteAudit is where history lives).
+model GrowthOpportunity {
+  id             String                  @id @default(uuid()) @db.Uuid
+  leadId         String                  @db.Uuid
+  type           String
+  title          String
+  evidence       String
+  recommendation String
+  impact         GrowthOpportunityImpact
+  createdAt      DateTime                @default(now())
+  updatedAt      DateTime                @updatedAt
+
+  lead Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@index([leadId])
+  @@map("growth_opportunities")
+}
+
+/// The cached, current AI intelligence read for a lead — Lead Summary +
+/// Growth Opportunity Analysis + Recommended Services, generated only on
+/// request (never automatically) and only from verified LeadRadar data (see
+/// LeadIntelligenceContext). One row per lead — `inputsHash` fingerprints
+/// the verified data that produced it, so a repeat request with unchanged
+/// underlying data serves the cache instead of calling the AI provider
+/// again (AI COST CONTROL). Recommended Services are computed by a
+/// deterministic, rule-based mapping over detected GrowthOpportunity
+/// findings — never AI-invented — see recommended-services.ts.
+model AIInsight {
+  id                  String         @id @default(uuid()) @db.Uuid
+  leadId              String         @unique @db.Uuid
+  summary             String
+  growthAnalysis      String
+  recommendedServices String[]
+  providerMode        AIProviderMode
+  model               String
+  inputsHash          String
+  generatedAt         DateTime       @default(now())
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+
+  lead Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@map("ai_insights")
+}
+
+/// One row per generated message (never overwritten — Regenerate creates a
+/// new row, so a user can compare/revert). Always the result of an explicit
+/// user request; see OUTREACH UX — no automated bulk messaging is ever
+/// triggered from this model.
+model OutreachMessage {
+  id                String           @id @default(uuid()) @db.Uuid
+  leadId            String           @db.Uuid
+  generatedByUserId String?          @db.Uuid
+  /// Set only when this message was generated as part of a campaign's bulk
+  /// generation step — lets the campaign dashboard's "messages generated"
+  /// stat attribute messages precisely instead of guessing from timestamps.
+  campaignId        String?          @db.Uuid
+  kind              OutreachKind     @default(OUTREACH)
+  channel           OutreachChannel
+  tone              OutreachTone
+  language          OutreachLanguage
+  subject           String?
+  body              String
+  status            OutreachStatus   @default(DRAFT)
+  providerMode      AIProviderMode
+  model             String
+  sentAt            DateTime?
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+
+  lead        Lead      @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  generatedBy User?     @relation("OutreachGeneratedBy", fields: [generatedByUserId], references: [id], onDelete: SetNull)
+  campaign    Campaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+
+  @@index([leadId])
+  @@index([campaignId])
+  @@map("outreach_messages")
+}
+
+/// Every AI provider call, for usage tracking (AI COST CONTROL) — including
+/// cache hits (`cached: true`, no provider call actually made) so "requests"
+/// vs. "actual generations" stay distinguishable in a future usage view.
+model AIUsageEvent {
+  id             String         @id @default(uuid()) @db.Uuid
+  organizationId String         @db.Uuid
+  userId         String?        @db.Uuid
+  leadId         String?        @db.Uuid
+  feature        AIFeature
+  providerMode   AIProviderMode
+  model          String
+  cached         Boolean        @default(false)
+  createdAt      DateTime       @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+  lead         Lead?        @relation(fields: [leadId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, createdAt])
+  @@index([leadId])
+  @@map("ai_usage_events")
+}
+
+/// Timeline of everything that happened on a lead (status changes, notes,
+/// messages sent, calls logged). `type` is an open string catalog rather
+/// than an enum since new activity kinds will be added often as modules
+/// land, without needing a migration each time.
+model LeadActivity {
+  id             String   @id @default(uuid()) @db.Uuid
+  leadId         String   @db.Uuid
+  organizationId String   @db.Uuid
+  userId         String?  @db.Uuid
+  type           String
+  metadata       Json?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  lead         Lead         @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([leadId])
+  @@index([organizationId])
+  @@map("lead_activities")
+}
+
+/// A user's personal bookmark of a lead — distinct from the lead existing
+/// in the org at all (that's just Lead). Powers "/app/saved" as a
+/// per-user view separate from the full org-wide "/app/leads" list.
+model SavedLead {
+  id             String   @id @default(uuid()) @db.Uuid
+  leadId         String   @db.Uuid
+  userId         String   @db.Uuid
+  organizationId String   @db.Uuid
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  lead         Lead         @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([leadId, userId])
+  @@index([organizationId])
+  @@map("saved_leads")
+}
+
+// ============================================================================
+// Search
+// ============================================================================
+
+model Search {
+  id             String       @id @default(uuid()) @db.Uuid
+  organizationId String       @db.Uuid
+  userId         String       @db.Uuid
+  query          String
+  location       String?
+  filters        Json?
+  status         SearchStatus @default(PENDING)
+  progress       Int          @default(0)
+  resultCount    Int          @default(0)
+  providerMode   ProviderMode
+  errorMessage   String?
+  /// The BullMQ job id backing this search, for cross-referencing queue state.
+  jobId          String?
+  completedAt    DateTime?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  organization Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  results      SearchResult[]
+
+  @@index([organizationId, createdAt])
+  @@map("searches")
+}
+
+/// Raw, deduplicated discovery candidates from a search — distinct from
+/// Lead, which only exists once a result is promoted (saved) into the org's
+/// CRM. Keeps the noisy/raw provider payload out of the Lead table. The
+/// normalized columns below (rating, hasWebsite, ...) mirror BusinessSummary
+/// from @lead-radar/types so results can be sorted/filtered in SQL; `rawData`
+/// keeps the full provider payload for audit/debugging.
+model SearchResult {
+  id       String @id @default(uuid()) @db.Uuid
+  searchId String @db.Uuid
+
+  businessName String
+  category     String?
+  address      String?
+  city         String?
+  country      String?
+  latitude     Float?
+  longitude    Float?
+
+  /// The provider's own id for this business — a real Google Place ID only
+  /// when the parent Search's providerMode is GOOGLE.
+  externalId       String?
+  rating           Float?
+  reviewCount      Int?
+  businessStatus   String?
+  websiteUrl       String?
+  hasWebsite       Boolean @default(false)
+  phone            String?
+  googleMapsUri    String?
+  hasGoogleProfile Boolean @default(false)
+
+  /// Populated once a website-audit / opportunity-scoring pass has run
+  /// against the promoted lead — null until then, never fabricated.
+  opportunityScore Int?
+
+  rawData          Json
+  promotedToLeadId String?  @db.Uuid
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  search         Search @relation(fields: [searchId], references: [id], onDelete: Cascade)
+  promotedToLead Lead?  @relation(fields: [promotedToLeadId], references: [id], onDelete: SetNull)
+
+  @@index([searchId])
+  @@index([searchId, rating])
+  @@map("search_results")
+}
+
+// ============================================================================
+// Campaigns
+// ============================================================================
+
+model Campaign {
+  id              String         @id @default(uuid()) @db.Uuid
+  organizationId  String         @db.Uuid
+  createdByUserId String?        @db.Uuid
+  name            String
+  description     String?
+  /// Optional targeting filters used to help pick leads for this campaign —
+  /// not enforced on CampaignLead membership, just the criteria the
+  /// campaign was built around.
+  targetCategory  String?
+  targetLocation  String?
+  service         CampaignService
+  tone            OutreachTone
+  channel         OutreachChannel
+  status          CampaignStatus @default(DRAFT)
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  organization     Organization      @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  createdBy        User?             @relation("CampaignCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  leads            CampaignLead[]
+  outreachMessages OutreachMessage[]
+
+  @@index([organizationId])
+  @@map("campaigns")
+}
+
+model CampaignLead {
+  id         String             @id @default(uuid()) @db.Uuid
+  campaignId String             @db.Uuid
+  leadId     String             @db.Uuid
+  status     CampaignLeadStatus @default(PENDING)
+  addedAt    DateTime           @default(now())
+  createdAt  DateTime           @default(now())
+  updatedAt  DateTime           @updatedAt
+
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  lead     Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@unique([campaignId, leadId])
+  @@map("campaign_leads")
+}
+
+// ============================================================================
+// Notifications, audit, tags, follow-ups
+// ============================================================================
+
+/// `type` is an open string catalog for the same reason as LeadActivity.type.
+model Notification {
+  id             String    @id @default(uuid()) @db.Uuid
+  organizationId String    @db.Uuid
+  userId         String    @db.Uuid
+  type           String
+  title          String
+  body           String?
+  metadata       Json?
+  readAt         DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt])
+  @@map("notifications")
+}
+
+model AuditLog {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String?  @db.Uuid
+  userId         String?  @db.Uuid
+  action         String
+  entityType     String
+  entityId       String?
+  metadata       Json?
+  ipAddress      String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: SetNull)
+  user         User?         @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId])
+  @@index([userId])
+  @@map("audit_logs")
+}
+
+model Tag {
+  id             String   @id @default(uuid()) @db.Uuid
+  organizationId String   @db.Uuid
+  name           String
+  color          String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  leads        LeadTag[]
+
+  @@unique([organizationId, name])
+  @@map("tags")
+}
+
+model LeadTag {
+  id        String   @id @default(uuid()) @db.Uuid
+  leadId    String   @db.Uuid
+  tagId     String   @db.Uuid
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  lead Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  tag  Tag  @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@unique([leadId, tagId])
+  @@map("lead_tags")
+}
+
+model FollowUp {
+  id             String         @id @default(uuid()) @db.Uuid
+  leadId         String         @db.Uuid
+  organizationId String         @db.Uuid
+  userId         String         @db.Uuid
+  dueAt          DateTime
+  note           String?
+  status         FollowUpStatus @default(PENDING)
+  completedAt    DateTime?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  lead         Lead         @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, status])
+  @@index([leadId])
+  @@map("follow_ups")
+}

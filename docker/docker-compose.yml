@@ -1,0 +1,120 @@
+name: leadradar
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-leadradar}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-leadradar_dev_password}
+      POSTGRES_DB: ${POSTGRES_DB:-leadradar}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-leadradar}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    profiles: ["full"]
+    build:
+      context: ..
+      dockerfile: docker/api.Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      API_PORT: 4000
+      DATABASE_URL: postgresql://${POSTGRES_USER:-leadradar}:${POSTGRES_PASSWORD:-leadradar_dev_password}@postgres:5432/${POSTGRES_DB:-leadradar}?schema=public
+      REDIS_URL: redis://redis:6379
+      WEB_ORIGIN: http://localhost:3000
+      # This profile runs the real production build with NODE_ENV=production,
+      # so it's held to the same standard as a real deployment — no insecure
+      # default here (the api's own startup guard in main.ts would refuse to
+      # boot on one anyway). Required, not defaulted: set these three in
+      # your own root .env first, e.g. `openssl rand -base64 32` each.
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in your root .env before running the full profile — e.g. `openssl rand -base64 32`}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?Set JWT_REFRESH_SECRET in your root .env before running the full profile}
+      COOKIE_SECRET: ${COOKIE_SECRET:?Set COOKIE_SECRET in your root .env before running the full profile}
+      MOCK_GOOGLE: ${MOCK_GOOGLE:-true}
+      MOCK_AI: ${MOCK_AI:-true}
+      MOCK_DATA: ${MOCK_DATA:-true}
+      GOOGLE_MAPS_ENABLED: ${GOOGLE_MAPS_ENABLED:-false}
+      GOOGLE_MAPS_API_KEY: ${GOOGLE_MAPS_API_KEY:-}
+      AI_MODE: ${AI_MODE:-mock}
+      AI_API_KEY: ${AI_API_KEY:-}
+      AI_MODEL: ${AI_MODEL:-claude-opus-5}
+    ports:
+      - "4000:4000"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:4000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  worker:
+    profiles: ["full"]
+    build:
+      context: ..
+      dockerfile: docker/worker.Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://${POSTGRES_USER:-leadradar}:${POSTGRES_PASSWORD:-leadradar_dev_password}@postgres:5432/${POSTGRES_DB:-leadradar}?schema=public
+      REDIS_URL: redis://redis:6379
+      WORKER_HEALTH_PORT: 4100
+      # Only used if a Search's providerMode is GOOGLE — the worker executes
+      # whatever mode the api assigned per-job, it doesn't decide mock vs.
+      # real independently. Safe to leave unset in mock-only demo mode.
+      GOOGLE_MAPS_API_KEY: ${GOOGLE_MAPS_API_KEY:-}
+    ports:
+      - "4100:4100"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:4100/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  web:
+    profiles: ["full"]
+    build:
+      context: ..
+      dockerfile: docker/web.Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - api
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_API_URL: http://localhost:4000
+      API_URL: http://api:4000
+    ports:
+      - "3000:3000"
+
+volumes:
+  postgres_data:
+  redis_data:
