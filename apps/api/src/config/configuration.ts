@@ -75,7 +75,12 @@ export default (): AppConfig => {
 
   return {
     nodeEnv: process.env.NODE_ENV ?? 'development',
-    port: Number(process.env.API_PORT ?? 4000),
+    // PORT is what Render (and most PaaS platforms) auto-injects and routes
+    // traffic to; API_PORT is this project's original/local-dev name and
+    // stays supported as a fallback (used unchanged by docker-compose.yml,
+    // which never sets PORT). Same alias pattern as GOOGLE_MAPS_API_KEY/
+    // GOOGLE_PLACES_API_KEY below.
+    port: Number(process.env.PORT ?? process.env.API_PORT ?? 4000),
     databaseUrl: process.env.DATABASE_URL ?? '',
     redisUrl: process.env.REDIS_URL ?? 'redis://localhost:6379',
     webOrigin: process.env.WEB_ORIGIN ?? 'http://localhost:3000',

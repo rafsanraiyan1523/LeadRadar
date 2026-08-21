@@ -9,8 +9,17 @@ COPY . .
 RUN pnpm install --frozen-lockfile
 RUN pnpm --filter api exec prisma generate
 RUN pnpm --filter @lead-radar/types run build
+RUN pnpm --filter @lead-radar/providers run build
 RUN pnpm --filter api run build
-RUN pnpm --filter=api deploy --prod /repo/deploy
+# --legacy: pnpm v10+'s default deploy mode requires
+# inject-workspace-packages=true (a repo-wide install-time behavior change
+# affecting local dev too, not just this Docker build) to produce a
+# self-contained output; --legacy scopes the older, non-symlink-out
+# behavior to just this one command, which is all a multi-stage Docker
+# build needs. Verified: the resulting node_modules/@lead-radar/* symlinks
+# resolve entirely within the deploy directory itself, so they stay valid
+# after the COPY into the runtime stage below.
+RUN pnpm --filter=api deploy --prod --legacy /repo/deploy
 
 FROM node:20-alpine AS runtime
 ENV NODE_ENV=production

@@ -4,11 +4,22 @@ import type { AppConfig } from '../../config/configuration';
 export const ACCESS_TOKEN_COOKIE = 'lr_access_token';
 export const REFRESH_TOKEN_COOKIE = 'lr_refresh_token';
 
+/**
+ * Environment-aware, not a blanket 'none' everywhere: the production
+ * frontend (Vercel) and API (Render) are on different domains, and
+ * SameSite=Lax cookies are never sent on a cross-site fetch/XHR — only
+ * SameSite=None gets them there, which in turn *requires* Secure (browsers
+ * reject `SameSite=None; Secure=false` outright). Locally, frontend and API
+ * are both `localhost` (same-site to each other) over plain HTTP, where
+ * Secure cookies wouldn't even round-trip — so dev deliberately keeps
+ * Lax + non-Secure, which already works there today.
+ */
 function baseCookieOptions(config: Pick<AppConfig, 'nodeEnv'>): CookieOptions {
+  const isProduction = config.nodeEnv === 'production';
   return {
     httpOnly: true,
-    secure: config.nodeEnv === 'production',
-    sameSite: 'lax',
+    secure: isProduction,
+    sameSite: isProduction ? 'none' : 'lax',
   };
 }
 

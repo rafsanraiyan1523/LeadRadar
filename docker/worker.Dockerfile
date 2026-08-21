@@ -11,7 +11,8 @@ RUN pnpm --filter api exec prisma generate
 RUN pnpm --filter @lead-radar/types run build
 RUN pnpm --filter @lead-radar/providers run build
 RUN pnpm --filter worker run build
-RUN pnpm --filter=worker deploy --prod /repo/deploy
+# See docker/api.Dockerfile's comment on this same line for why --legacy is needed.
+RUN pnpm --filter=worker deploy --prod --legacy /repo/deploy
 
 FROM node:20-alpine AS runtime
 ENV NODE_ENV=production

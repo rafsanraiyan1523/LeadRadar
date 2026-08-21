@@ -1,4 +1,15 @@
 {
   "extends": "./tsconfig.json",
-  "exclude": ["node_modules", "test", "dist", "**/*spec.ts"]
+  // "prisma" (specifically prisma/seed.ts) must stay excluded from this
+  // build: with no explicit rootDir set, TypeScript infers it from the
+  // common ancestor of every compiled file. Once seed.ts (outside src/) was
+  // added, that ancestor became the package root instead of src/, so the
+  // build output shifted to dist/src/main.js instead of dist/main.js —
+  // silently breaking both `start:prod` (`node dist/main`) and
+  // docker/api.Dockerfile's CMD, undetected until the production output
+  // was actually run. prisma/seed.ts is still typechecked normally via the
+  // base tsconfig.json (`pnpm typecheck`); it's compiled separately at
+  // runtime by `ts-node --transpile-only` (see package.json's
+  // `prisma.seed` field), so excluding it here doesn't affect seeding.
+  "exclude": ["node_modules", "test", "dist", "prisma", "**/*spec.ts"]
 }

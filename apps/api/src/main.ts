@@ -1,4 +1,5 @@
 import { NestFactory } from '@nestjs/core';
+import type { NestExpressApplication } from '@nestjs/platform-express';
 import { ConfigService } from '@nestjs/config';
 import { ValidationPipe } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
@@ -39,12 +40,25 @@ function assertProductionSecretsAreConfigured(
 }
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule, { bufferLogs: true });
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
+    bufferLogs: true,
+  });
   const config = app.get(ConfigService<AppConfig, true>);
   const logger = app.get(Logger);
   app.useLogger(logger);
 
   assertProductionSecretsAreConfigured(config);
+
+  // Render (and most PaaS platforms) sit exactly one reverse-proxy hop in
+  // front of this container. Express ignores X-Forwarded-For by default,
+  // so without this, req.ip resolves to the proxy's own address for every
+  // request — collapsing the global ThrottlerModule's per-client rate limit
+  // into one shared bucket for all users combined. `1` trusts exactly one
+  // hop (the immediate proxy), not an arbitrary chain — a client can't
+  // spoof its way past this by adding fake X-Forwarded-For hops of its own,
+  // since only the outermost (proxy-appended) entry is trusted. Revisit
+  // this number if a CDN/additional proxy is ever placed in front of Render.
+  app.set('trust proxy', 1);
 
   app.use(helmet());
   app.use(cookieParser());
