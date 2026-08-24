@@ -102,6 +102,16 @@ export function generateGrowthOpportunities(input: GrowthOpportunityInput): Grow
         recommendation: "Add a clear services/offerings section so visitors and search engines understand what the business does.",
       });
     }
+
+    if (extraction.brokenLinksChecked > 0 && extraction.brokenLinksFound > 0) {
+      findings.push({
+        title: "Broken links found during crawl",
+        category: "technical",
+        severity: "MEDIUM",
+        evidence: `${extraction.brokenLinksFound} of ${extraction.brokenLinksChecked} checked links failed to load.`,
+        recommendation: "Fix or remove broken links — they erode visitor trust and can hurt SEO crawlability.",
+      });
+    }
   }
 
   if (googleProfile.status === "NOT_FOUND_IN_CURRENT_SEARCH") {
