@@ -378,6 +378,27 @@ importers:
         specifier: ^2.1.4
         version: 2.1.9(@types/node@20.19.43)(lightningcss@1.32.0)(supports-color@8.1.1)(terser@5.50.0)
 
+  packages/review-bot:
+    devDependencies:
+      '@lead-radar/eslint-config':
+        specifier: workspace:*
+        version: link:../eslint-config
+      '@types/node':
+        specifier: ^20.16.0
+        version: 20.19.43
+      eslint:
+        specifier: ^9.13.0
+        version: 9.39.5(jiti@2.7.0)(supports-color@8.1.1)
+      prettier:
+        specifier: ^3.3.3
+        version: 3.9.6
+      typescript:
+        specifier: ^5.5.4
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.4
+        version: 2.1.9(@types/node@20.19.43)(lightningcss@1.32.0)(supports-color@8.1.1)(terser@5.50.0)
+
   packages/types:
     devDependencies:
       typescript:

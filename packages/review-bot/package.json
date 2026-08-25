@@ -1,0 +1,25 @@
+{
+  "name": "@lead-radar/review-bot",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Multi-subagent PR review bot (see docs/assignment/subagent-architecture.md). Explore, the four reviewers, the pipeline, safe auto-fix, and PR triage are implemented so far.",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@lead-radar/eslint-config": "workspace:*",
+    "@types/node": "^20.16.0",
+    "eslint": "^9.13.0",
+    "prettier": "^3.3.3",
+    "typescript": "^5.5.4",
+    "vitest": "^2.1.4"
+  }
+}
