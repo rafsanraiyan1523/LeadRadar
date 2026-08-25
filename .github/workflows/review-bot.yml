@@ -1,0 +1,120 @@
+name: Review Bot
+
+# Trigger: pull_request (not pull_request_target). This means the bot never
+# runs with elevated/write-scoped secrets while checking out a fork's
+# untrusted code — see docs/assignment/github-actions.md's Security
+# considerations for why this tradeoff is deliberate, and what it costs
+# (fork PRs get a failed check but no posted comment; same-repo PRs get
+# the full review).
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+# Minimum permissions for this job: read the code, write PR comments and
+# labels. Nothing broader — no contents:write (auto-fix runs report-only,
+# not commit-and-push, specifically so this doesn't need to change; see
+# docs/assignment/autofix-and-triage.md), no issues:write beyond what PR
+# comments/labels need, no repository-admin scope of any kind.
+permissions:
+  contents: read
+  pull-requests: write
+
+# A new push to the same PR supersedes any review already in flight for
+# it — no point finishing a review of a commit that's no longer current.
+concurrency:
+  group: review-bot-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    name: Run review bot and post findings
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout PR head (full history, for merge-base diffing)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build review bot
+        run: pnpm --filter @lead-radar/review-bot run build
+
+      # continue-on-error: the whole job intentionally does NOT stop here
+      # on failure — the "Post review to PR" step below still runs (via
+      # if: always()) and posts a safe, generic failure notice instead of
+      # silently leaving the PR with no feedback. The job is still marked
+      # failed at the end (see the final step) so the failure is visible
+      # as a red check, just not as a crashed workflow with no PR comment.
+      - name: Run review bot
+        id: run_bot
+        timeout-minutes: 5
+        env:
+          # Reserved for a future LLM-backed Plan/reviewer stage (see
+          # docs/assignment/context-strategy.md §4 and §10) — the four
+          # reviewers implemented today are fully deterministic and never
+          # read this. Never hardcoded; unset/empty does not fail this
+          # step. NEVER echo this value anywhere.
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          node packages/review-bot/scripts/review.cjs \
+            "$GITHUB_WORKSPACE" \
+            "origin/${{ github.event.pull_request.base.ref }}" \
+            "${{ github.event.pull_request.head.sha }}" \
+            > review-findings.json
+        continue-on-error: true
+
+      - name: Record whether the review bot actually succeeded
+        id: bot_status
+        if: always()
+        run: |
+          if [ "${{ steps.run_bot.outcome }}" = "success" ]; then
+            echo "success=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "success=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Report-only (no --apply): detects Prettier-fixable formatting on
+      # this PR's changed files and reports it in the review comment, but
+      # does not commit anything — see docs/assignment/autofix-and-triage.md
+      # for why this deployment keeps contents: read rather than granting
+      # write access for an auto-commit. Best-effort: failure here never
+      # blocks the review itself.
+      - name: Check for safe auto-fixes (report only)
+        id: run_autofix
+        if: always()
+        continue-on-error: true
+        run: |
+          node packages/review-bot/scripts/autofix.cjs \
+            "$GITHUB_WORKSPACE" \
+            "origin/${{ github.event.pull_request.base.ref }}" \
+            "${{ github.event.pull_request.head.sha }}" \
+            > autofix-result.json
+
+      - name: Post review + triage label to PR (creates or updates one comment — never duplicates)
+        if: always()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          node packages/review-bot/scripts/post-review.cjs \
+            "$( [ '${{ steps.bot_status.outputs.success }}' = 'true' ] && echo review-findings.json || echo __FAILED__ )" \
+            "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            autofix-result.json
+
+      - name: Fail the job if the review bot itself failed
+        if: steps.bot_status.outputs.success != 'true'
+        run: |
+          echo "The review bot did not complete successfully — see the 'Run review bot' step above."
+          exit 1
