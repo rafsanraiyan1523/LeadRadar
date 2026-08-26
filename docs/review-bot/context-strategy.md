@@ -101,26 +101,72 @@ Explicitly, and by design, never present anywhere in `ExploreContextPackage`:
 
 ## 4. What gets passed to the Plan subagent
 
-**Status: designed (Step 4), not yet implemented.** Per the architecture,
-Plan receives the PR diff, Explore's *entire* `ExploreContextPackage`, and
-the rubric — it is the one stage allowed to see the full package, because
-its job is deciding how to slice it, not reviewing code itself. Plan's
-output is four small **review briefs**, each carrying only the hunks/
-context relevant to one category, plus specific hypotheses worth checking
-(`subagent-architecture.md §2`).
+**Status: implemented (Step 13).** `createPlan()`
+([`plan/plan.ts`](../../packages/review-bot/src/plan/plan.ts)) receives
+Explore's *entire* `ExploreContextPackage` — nothing narrower, since
+Plan's job is deciding how to slice it, matching the architecture's
+original design (§2) exactly. It receives no PR metadata beyond what's
+already inside that package (no PR title/description — this bot's
+pipeline has never plumbed those through; a future addition would need
+to add them explicitly, not silently). It does **not** receive: the raw
+diff text (Explore already reduced that to hunks), any file's full
+content, the rubric document itself (Plan's rules are hand-encoded
+against the rubric's categories, the same way Explore's and the
+reviewers' own rules are — see §7 below), or, as with every other
+stage, `docs/assignment/benchmark-ground-truth.md` (structurally absent
+from a PR branch's checkout, denylisted defense-in-depth the same way
+Explore already denylists it — Plan operates purely on the
+`ExploreContextPackage` object it's called with, not on the filesystem,
+so this denylist is inherited automatically rather than needing its own
+copy).
 
-**What exists today instead:** `reviewers/shared/types.ts`'s
-`narrowFor*Review()` functions are a *static* stand-in for Plan's
-field-narrowing half — each is a pure `Pick<>` projection of
-`ExploreContextPackage` (no hypotheses, no prioritization, no dynamic
-"this category looks low-relevance" judgment). This is called out
-explicitly, not glossed over: the context-budget *shape* Plan would enforce
-already exists and is already tested (each reviewer's input type
-structurally cannot carry fields outside its remit); what's missing is
-Plan's *judgment* layer on top of that shape (deciding what's worth
-flagging as a hypothesis, not just what fields to include).
+**What Plan passes to each reviewer.** Plan's output (`Plan`) is a
+routing decision, not a narrowed data package by itself — for each
+changed file, it selects which reviewer(s) (`selectedReviewers`) should
+see it, states why (`rationale`), records which symbols are relevant
+where known (`relevantSymbols`), what fields that file's data actually
+needs to carry for those reviewers (`contextRequirements`, mirroring
+`narrowFor*Review()`'s own `Pick<>` field lists — see §5 below), and how
+urgent it looks (`priority`). The actual data narrowing then happens
+exactly as it already did (§5): `selectFilesForReviewer(pkg, plan,
+reviewerName)` filters `ExploreContextPackage.changedFiles` down to only
+the files Plan selected for that reviewer, and the existing
+`narrowFor*Review()` `Pick<>` projection runs on that already-filtered
+subset. A file Plan didn't select for a given reviewer is gone before
+that reviewer's own narrowing ever runs — not just documented as
+irrelevant, structurally absent from its input.
+
+**How routing decisions are made — and what they deliberately don't use.**
+Every rule is a mechanical check against signals Explore already computed
+for general purposes, never anything specific to a known defect: file
+extension (routes non-code/config files to zero reviewers), changed-symbol
+kinds (a function/class/method-level change routes to Test-coverage; a
+file with no named symbol change doesn't), Explore's own `riskFlags`
+(`security-sensitive-path`/`possible-hardcoded-secret`) plus the Security
+reviewer's own published credential-shape patterns (routes to Security),
+and a `.controller.ts` path convention (also routes to Security, matching
+that reviewer's own established target). `plan.spec.ts`'s "no hidden
+benchmark knowledge" tests assert directly that `plan.ts`'s source never
+mentions a specific benchmark file path, defect identifier, or the
+ground-truth file, and that a diff shaped like a known defect but living
+in a completely different, invented file path still routes correctly —
+proving the rules key off *shape*, not *location*.
+
+**The "all four reviewers always run" principle (subagent-architecture.md
+§2) is preserved, at the category level.** `runReviewBot()` always calls
+all four reviewer functions for every PR — Plan cannot make a category
+not run at all. What Plan controls is how much (if anything) each one
+gets to look at: a reviewer Plan found nothing relevant for receives an
+empty file list and correctly returns zero findings, rather than being
+skipped as a function call. This is the same guarantee the architecture
+asked for, expressed at the data level instead of the invocation level.
 
 ## 5. What each specialized reviewer receives
+
+Two layers of narrowing now apply, in order — which *files* (Plan, §4)
+and which *fields* of each file (this section, unchanged since Steps 5–6):
+a reviewer never even receives a row for a file Plan didn't select for
+it, and for the files it does receive, only the columns below.
 
 | Reviewer | Narrowed fields (`Pick<ChangedFileSummary, …>`) | On-demand extra |
 |---|---|---|
@@ -283,10 +329,11 @@ Explore's diff summary           ExploreContextPackage
    flags, templated purpose)
       │
       ▼
-Plan's per-reviewer context      { files: [{ path, changeKind, hunks, changedSymbols }] }
-  (narrowed Pick<> slice per        — Logic's slice for this file carries no relevantTests,
-   reviewer — today: static           no callers, no riskFlags; ~4 fields instead of ~12
-   narrowFor*Review(), see §4)
+Plan's per-reviewer context      Plan { areas: [{ file, selectedReviewers: ["logic", …],
+  (file routing + narrowed            rationale, contextRequirements, priority }], … }
+   Pick<> slice per reviewer,       → then { files: [{ path, changeKind, hunks, changedSymbols }] }
+   see §4)                            — Logic's slice for this file carries no relevantTests,
+                                       no callers, no riskFlags; ~4 fields instead of ~12
       │
       ▼
 Specialized reviewer             detectComparisonOperatorFlip(file, hunk)

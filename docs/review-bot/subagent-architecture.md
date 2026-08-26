@@ -210,6 +210,42 @@ fails — confirmed in Step 3). Two layers enforce this holds for the bot:
 
 ### 2. Plan subagent
 
+**Implementation status (Step 13 — updated from "designed, not built"):**
+Plan is now implemented at
+[`packages/review-bot/src/plan/plan.ts`](../../packages/review-bot/src/plan/plan.ts)
+(`createPlan()`), integrated into `runReviewBot()` so it is the real gate
+between Explore and every reviewer — not a parallel, unused module. The
+design below (written in Step 4, before any code existed) is preserved
+as-is; this callout states plainly where the real implementation matches
+it and where it's a simpler, deterministic realization of the same
+responsibility rather than the full design:
+
+- **Matches the design:** the responsibility ("what should each reviewer
+  look at, and why — not is anything wrong"), the input (Explore's
+  context package), and the output shape (a per-file routing decision with
+  rationale and context requirements) are implemented as designed. Every
+  routing rule is deterministic and grounded in Explore's own
+  already-computed signals (file extension, changed-symbol kinds, Explore's
+  `riskFlags`, the Security reviewer's own published credential-shape
+  patterns) — continuing the same "agents only where judgment is required"
+  principle Explore and the reviewers already follow (§ below), rather than
+  the LLM-driven hypothesis generation the illustrative JSON example
+  further down this section sketches.
+- **Simplified relative to the design:** the real `Plan` output doesn't
+  carry free-text `hypotheses_to_check` strings or a lint-result passthrough
+  for Style — it carries a `rationale` string (why these reviewers, for
+  this file) and a `contextRequirements` field list instead. The "all four
+  reviewers always run" design decision (below) is preserved at the
+  category level: a reviewer function is still always invoked for every
+  PR, but Plan can — and routinely does — hand it zero files when nothing
+  in the diff is relevant to that category (see
+  `docs/assignment/context-strategy.md` §4 for the exact contract, and
+  `plan.spec.ts` for the routing tests).
+- **Full field-by-field contract** (input/output/allowed/must-not-receive)
+  is documented in `docs/assignment/context-strategy.md` §4, since that's
+  where this document already sends readers for Plan's exact
+  input/output details.
+
 - **Responsibility:** decompose the review into four minimal, targeted
   **review briefs** — one per specialized reviewer — and flag specific
   risk hypotheses Explore's package surfaced that a reviewer should check.
