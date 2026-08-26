@@ -19,7 +19,7 @@ const DIGITAL_PILLAR_MAX = 60;
 const LEGITIMACY_MAX = 40;
 
 export function getOpportunityLevel(score: number): OpportunityLevel {
-  if (score >= 66) return "HIGH";
+  if (score > 66) return "HIGH";
   if (score >= 33) return "MEDIUM";
   return "LOW";
 }
