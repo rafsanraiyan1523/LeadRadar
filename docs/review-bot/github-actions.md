@@ -9,15 +9,47 @@ shape from Step 11 are unchanged).
 
 Workflow file: [`.github/workflows/review-bot.yml`](../../.github/workflows/review-bot.yml).
 
-## Status — read this first
+## Status
 
-**This workflow has been implemented and validated locally (YAML syntax +
-script syntax — see [Local validation](#local-validation)).** Whether it
-has been confirmed by an actual GitHub Actions run depends on what's
-happened by the time you're reading this — see
-[docs/assignment/final-submission.md](final-submission.md) for the actual,
-current status of the live test, since that document (not this one) is
-kept as the single source of truth for "has this actually run yet."
+This workflow has run live in GitHub Actions against real PRs on
+`rafsanraiyan1523/LeadRadar` (not just validated locally) — including one
+real failure that surfaced a genuine gap, since fixed; see
+[Failure modes](#failure-modes) below.
+
+## Failure modes
+
+Three distinct failure modes are handled differently, deliberately:
+
+1. **Review generation fails** (`Run review bot` — e.g. Explore/a reviewer
+   throws). `continue-on-error: true` lets the job continue so a comment
+   can still be posted; `bot_status` records the real outcome via
+   `steps.run_bot.outcome` (unaffected by `continue-on-error`, which only
+   masks `.conclusion`); `post-review.cjs` is then invoked with the
+   `__FAILED__` sentinel and posts `renderFailureComment()` — an honest
+   "the bot didn't finish" notice, not a false "no issues found."
+2. **The posting step itself crashes** (`post-review.cjs` throws before
+   posting anything — e.g. a missing `dist/` build). This actually
+   happened on a real PR: `assignment/seeded-defects`'s branch predates
+   the review-bot package's existence on `main`, so `packages/review-bot`
+   was entirely absent from that checkout, and `node
+   .../post-review.cjs` failed with `Cannot find module`. Originally this
+   step had no `continue-on-error`, so the job hard-failed with a bare
+   stack trace and **no PR comment at all** — correct in that it didn't
+   report false success, but unhelpful: a contributor saw a red check
+   with no explanation on the PR itself. Fixed by giving this step
+   `continue-on-error: true` plus a dependency-free fallback step
+   (`curl` + `node -e`, no `require("../dist")`) that posts a distinct
+   "posting step itself failed" comment when `steps.post_review.outcome
+   == 'failure'`. The job still fails either way — `continue-on-error`
+   here only lets the fallback step run, it does not change job status.
+3. **Triage/label failure** — `post-review.cjs` already treats posting the
+   comment and applying the label as two independently-caught operations
+   internally (see the script's own `try`/`catch` blocks); one failing
+   doesn't prevent the other from being attempted.
+
+None of this is theoretical: failure mode 2 is exactly what happened on
+the real PR above, and the fix was verified against that same root cause
+rather than a hypothetical.
 
 ## Workflow trigger
 
@@ -256,10 +288,10 @@ a real fork PR.
    nothing already configured to conflict with or duplicate.
 2. **Push this workflow file to `main` and open a same-repository PR** —
    that's the only way to get a genuine GitHub Actions run confirming the
-   parts local validation couldn't reach (listed above). This is carried
-   out in Step 12 (see [final-submission.md](final-submission.md) for the
-   real outcome — PR URL, workflow run, and whether the comment/labels
-   actually appeared).
+   parts local validation couldn't reach (listed above). Done: the
+   workflow has run against real same-repository PRs, posting real
+   comments and applying real labels — see this repository's Pull
+   Requests and Actions tabs for current runs.
 3. **Optional, only if/when a future LLM-backed stage is built:** add a
    repository secret named `ANTHROPIC_API_KEY` (Settings → Secrets and
    variables → Actions → New repository secret). **I cannot and did not

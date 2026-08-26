@@ -65,9 +65,8 @@ missing feature:
   (`dryRun: false`) and is tested doing exactly that (see
   [Tests](#tests) below) — enabling it live is a one-line change
   (`autofix.cjs --apply` + `contents: write` in the workflow), not a
-  redesign. This is named explicitly in
-  [final-submission.md](final-submission.md)'s "what I would improve
-  next".
+  redesign. Not enabled today, deliberately — kept report-only per the
+  minimum-permissions reasoning above.
 
 **A real caveat surfaced while verifying this locally, worth stating
 plainly:** running `autofix.cjs` against this repository's own checkout
@@ -134,8 +133,8 @@ Both places named in the step's instructions:
 29 new tests across 6 files, all hermetic (no network, no real GitHub
 API — the one script that talks to the real API, `post-review.cjs`, was
 separately verified with a mocked `fetch` before being wired into the
-live workflow, confirming its request sequence — see
-[final-submission.md](final-submission.md) for that verification note).
+live workflow, confirming its request sequence, and has since been
+confirmed against the real GitHub API in live workflow runs).
 
 | Requirement | File | What it proves |
 |---|---|---|
