@@ -101,8 +101,16 @@ jobs:
             "${{ github.event.pull_request.head.sha }}" \
             > autofix-result.json
 
+      # continue-on-error here does NOT hide this failure — the final step
+      # below still fails the job if this step failed. It exists only so
+      # the fallback-notice step after it can run and post *something* to
+      # the PR when this step itself can't (e.g. the review-bot package
+      # failed to build/load) — see docs/review-bot/github-actions.md's
+      # "Failure modes" section for the incident this was written for.
       - name: Post review + triage label to PR (creates or updates one comment — never duplicates)
+        id: post_review
         if: always()
+        continue-on-error: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
@@ -113,8 +121,36 @@ jobs:
             "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
             autofix-result.json
 
-      - name: Fail the job if the review bot itself failed
-        if: steps.bot_status.outputs.success != 'true'
+      # Last-resort, dependency-free fallback: only runs if "Post review +
+      # triage" itself crashed before it could post anything (distinct from
+      # "the review generation failed", which that step already handles
+      # gracefully via the __FAILED__ sentinel above). Uses plain curl and
+      # node -e — no require("../dist") — so it still works even when the
+      # thing that's broken is the review-bot package itself. Best-effort
+      # (its own failure is swallowed): the job fails either way via the
+      # step below, this only adds a human-visible explanation on the PR
+      # instead of a bare Actions log.
+      - name: Post fallback notice if the posting step itself crashed
+        if: always() && steps.post_review.outcome == 'failure'
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "The review bot did not complete successfully — see the 'Run review bot' step above."
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          BODY=$(node -e '
+            const runUrl = process.argv[1];
+            console.log(JSON.stringify({
+              body: "<!-- review-bot:findings -->\n\n### 🤖 Review bot\n\nThe review-posting step itself failed to run — this is different from \"no issues found\". No review could be posted for this commit. See [this workflow run](" + runUrl + ") for the exact error.",
+            }));
+          ' "$RUN_URL")
+          curl -sS -X POST \
+            -H "Authorization: Bearer $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/comments" \
+            -d "$BODY" > /dev/null
+
+      - name: Fail the job if the review bot or the posting step failed
+        if: steps.bot_status.outputs.success != 'true' || steps.post_review.outcome == 'failure'
+        run: |
+          echo "The review bot pipeline did not complete successfully — see the 'Run review bot' and/or 'Post review + triage' steps above."
           exit 1
