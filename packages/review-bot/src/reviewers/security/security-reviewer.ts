@@ -16,8 +16,12 @@ const UNDER_TEST_DIR = /(^|\/)(e2e|test)\//i;
 // Step 5's Explore risk.ts, extended slightly (AWS key shape added) and
 // re-implemented here independently since the Security reviewer's
 // threshold for "worth a full Finding" is different from Explore's
-// lightweight flag.
-const CREDENTIAL_SHAPES = [
+// lightweight flag. Exported (Step 13) so the Plan subagent's routing can
+// reuse this exact, single-source-of-truth definition of "credential-
+// shaped" rather than re-deriving or duplicating it — Plan needs to know
+// whether a file is *worth sending to Security* using the same notion of
+// "looks like a secret" this reviewer itself uses, not a narrower guess.
+export const CREDENTIAL_SHAPES = [
   /AIza[0-9A-Za-z_-]{10,}/, // Google API key shape
   /sk-[A-Za-z0-9_-]{16,}/, // OpenAI/Anthropic-style secret key shape
   /AKIA[0-9A-Z]{16}/, // AWS access key ID shape
@@ -27,7 +31,7 @@ const CREDENTIAL_SHAPES = [
 // camelCase compounds (e.g. googlePlacesApiKey), where "apiKey" has no word
 // boundary on its left (the transition from "s" to "A" is \w-to-\w, not a
 // boundary) — a \b-anchored version would silently miss exactly this shape.
-const CREDENTIAL_KEYWORD = /apiKey|api_key|secret|token|password|credential|privateKey|private_key/i;
+export const CREDENTIAL_KEYWORD = /apiKey|api_key|secret|token|password|credential|privateKey|private_key/i;
 
 /**
  * Detector 1 — a credential-shaped literal introduced alongside a
